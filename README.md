@@ -1,1 +1,1 @@
-Fake Weather App
+<h1 align= 'center'>Fake Weather App</h1>
