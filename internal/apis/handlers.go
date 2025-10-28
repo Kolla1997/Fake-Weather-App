@@ -7,105 +7,102 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
-	"sync"
-
-	"golang.org/x/text/cases"
-	"golang.org/x/text/language"
+	"time"
 )
 
 type multCities struct {
 	Cities []string `json:"cities"`
 }
 
-var (
-	workers int = 3
-	wg      sync.WaitGroup
-)
-
 func homeHandler(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintln(w, "Welcome to fake weather application!")
-
 }
 
 func appHealthHandler(w http.ResponseWriter, r *http.Request) {
-	fmt.Fprintln(w, "Status:", http.StateActive)
-}
-
-func getWeather(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(store.UpdatedStates)
-
+	json.NewEncoder(w).Encode(map[string]string{"status": "ok", "service": "FakeWeatherApp"})
 }
 
-func stateTitled(state string) string {
-	caser := cases.Title(language.English)
-	state = caser.String(state)
-	fmt.Printf("Fetching weather data for state: %s\n", state)
-	return state
-}
-
-func postWeather(w http.ResponseWriter, r *http.Request) {
+// GET /weather -> all cached
+// POST /weather -> {"cities":["Texas","Illinois"]}
+func weatherCollectionHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	var state string
 
-	pathParts := strings.Split(strings.TrimSpace(strings.TrimPrefix(r.URL.Path, "/data")), "/")
-	if len(pathParts) < 2 || pathParts[2] == "" {
-		http.Error(w, "Bad Request: state not provided in path", http.StatusBadRequest)
-		return
-	}
-	// 3. Extract the state from the second segment.
-	state = stateTitled(pathParts[2])
-	response := core.FetchWeatherData(state)
-	json.NewEncoder(w).Encode(response)
-
-}
-
-func postCitiesWeather(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	var respCities multCities
-	if err := json.NewDecoder(r.Body).Decode(&respCities); err != nil {
-		fmt.Println(err)
-		http.Error(w, "Error while parsing request", http.StatusBadRequest)
-		return
-	}
-	jobs := make(chan string, len(respCities.Cities))
-	results := make(chan store.Weather)
-	fmt.Println(respCities.Cities)
-	for i := 0; i < workers; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for job := range jobs {
-				fmt.Println("-->", job)
-				results <- core.FetchWeatherData(stateTitled(job))
-			}
-		}()
-	}
-
-	for _, city := range respCities.Cities {
-		jobs <- city
-	}
-	close(jobs)
-	go func() {
-		wg.Wait()
-		close(results)
-	}()
-	out := make([]store.Weather, 0, len(respCities.Cities))
-	for result := range results {
-		out = append(out, result)
-	}
-	if err := json.NewEncoder(w).Encode(out); err != nil {
-		http.Error(w, "Failed to encode response", http.StatusInternalServerError)
-	}
-
-}
-
-func weatherHadhler(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
-		getWeather(w, r)
-	case http.MethodPost:
-		postCitiesWeather(w, r)
+		snapshot := store.SnapshotUpdatedStates() // safe copy
+		json.NewEncoder(w).Encode(snapshot)
+		return
 
+	case http.MethodPost:
+		var payload multCities
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			http.Error(w, `{"error":"invalid JSON"}`, http.StatusBadRequest)
+			return
+		}
+		if len(payload.Cities) == 0 {
+			http.Error(w, `{"error":"cities cannot be empty"}`, http.StatusBadRequest)
+			return
+		}
+
+		// worker pool
+		workers := 3
+		jobs := make(chan string)
+		results := make(chan store.Weather, len(payload.Cities))
+
+		for i := 0; i < workers; i++ {
+			go func() {
+				for city := range jobs {
+					results <- core.FetchWeatherData(city)
+				}
+			}()
+		}
+		go func() {
+			for _, c := range payload.Cities {
+				jobs <- c
+			}
+			close(jobs)
+		}()
+
+		// collect with a timeout safeguard
+		out := make([]store.Weather, 0, len(payload.Cities))
+		timeout := time.After(8 * time.Second)
+		for i := 0; i < len(payload.Cities); i++ {
+			select {
+			case r := <-results:
+				out = append(out, r)
+			case <-timeout:
+				http.Error(w, `{"error":"timeout fetching some cities"}`, http.StatusGatewayTimeout)
+				return
+			}
+		}
+		json.NewEncoder(w).Encode(out)
+		return
+
+	default:
+		http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
 	}
+}
+
+// GET /weather/{state}
+func weatherItemHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+
+	// "/weather/{state}"
+	parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/weather/"), "/")
+	if len(parts) == 0 || parts[0] == "" {
+		http.Error(w, `{"error":"state required"}`, http.StatusBadRequest)
+		return
+	}
+	state := parts[0]
+	data := core.FetchWeatherData(state)
+	if (data == store.Weather{}) {
+		http.Error(w, `{"error":"state not found or provider error"}`, http.StatusBadGateway)
+		return
+	}
+	json.NewEncoder(w).Encode(data)
 }

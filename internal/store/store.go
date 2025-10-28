@@ -1,6 +1,10 @@
 package store
 
-import "sync"
+import (
+	"strings"
+	"sync"
+	"time"
+)
 
 type Weather struct {
 	State    string  `json:"state"`
@@ -16,22 +20,17 @@ type Coordinates struct {
 }
 
 var (
-	MU            sync.Mutex
-	UpdatedStates map[string]Weather
+	mu            sync.RWMutex
+	updatedStates map[string]Weather
+
+	stateMap   map[string]Coordinates // canonical -> coords
+	stateIndex map[string]string      // lowercase -> canonical
 )
 
-var StatesData = struct {
-	sync.RWMutex
-	AllStates map[string]Coordinates
-}{
-	AllStates: make(map[string]Coordinates), // Initialize the map properly
-}
-
 func init() {
-	UpdatedStates = make(map[string]Weather)
-	StatesData.Lock()
-	defer StatesData.Unlock()
-	StatesData.AllStates = map[string]Coordinates{
+	updatedStates = make(map[string]Weather)
+
+	stateMap = map[string]Coordinates{
 		"Alabama":              {32.7794, -86.8287},
 		"Alaska":               {64.0685, -152.2782},
 		"Arizona":              {34.2744, -111.6602},
@@ -84,5 +83,44 @@ func init() {
 		"Wisconsin":            {44.6243, -89.9941},
 		"Wyoming":              {42.9957, -107.5512},
 	}
+	stateIndex = make(map[string]string, len(stateMap))
+	for k := range stateMap {
+		stateIndex[strings.ToLower(k)] = k
+	}
+}
 
+func NormalizeState(s string) (string, bool) {
+	s = strings.TrimSpace(s)
+	canonical, ok := stateIndex[strings.ToLower(s)]
+	return canonical, ok
+}
+
+func GetCoords(state string) (Coordinates, bool) {
+	coords, ok := stateMap[state]
+	return coords, ok
+}
+
+func UpsertWeather(w Weather) {
+	mu.Lock()
+	defer mu.Unlock()
+	updatedStates[w.State] = w
+}
+
+func SnapshotUpdatedStates() map[string]Weather {
+	mu.RLock()
+	defer mu.RUnlock()
+	cp := make(map[string]Weather, len(updatedStates))
+	for k, v := range updatedStates {
+		cp[k] = v
+	}
+	return cp
+}
+
+func TimeToChicago(utcStr string) string {
+	t, err := time.Parse(time.RFC3339, utcStr)
+	if err != nil {
+		return utcStr
+	}
+	loc, _ := time.LoadLocation("America/Chicago")
+	return t.In(loc).Format("2006-01-02 15:04:05")
 }

@@ -7,11 +7,10 @@ import (
 )
 
 func main() {
-	fmt.Println("Sping up the Fake Weather Application!")
+	fmt.Println("Starting the Fake Weather Application!")
+	apis.RegisterRoutes()
 
-	apis.FakeWaterRouter()
 	if err := http.ListenAndServe(":8080", nil); err != nil {
-		fmt.Println("Error while sping up the app: ", err)
-		return
+		fmt.Println("Error while starting the app:", err)
 	}
 }

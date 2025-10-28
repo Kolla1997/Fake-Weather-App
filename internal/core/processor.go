@@ -6,15 +6,13 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"time"
 )
 
-const (
-	apiURL = "https://api.tomorrow.io/v4/weather/forecast"
-	apiKey = "cplb3zlYdrVfAIYKJJr0uw7SvsxMpmXU"
-)
+const apiURL = "https://api.tomorrow.io/v4/weather/forecast"
 
-var location string
+var httpClient = &http.Client{Timeout: 5 * time.Second}
 
 type WeatherResponse struct {
 	Timelines struct {
@@ -28,60 +26,63 @@ type WeatherResponse struct {
 	} `json:"timelines"`
 }
 
-func timeToDate(utcTimeStr string) string {
-	utcTime, err := time.Parse(time.RFC3339, utcTimeStr)
-	if err != nil {
-		panic(err)
+func FetchWeatherData(stateInput string) store.Weather {
+	state, ok := store.NormalizeState(stateInput)
+	if !ok {
+		fmt.Println("Unknown state:", stateInput)
+		return store.Weather{}
 	}
-	cstLocation, err := time.LoadLocation("America/Chicago")
-	if err != nil {
-		panic(err)
-	}
-	cstTime := utcTime.In(cstLocation)
-	cstString := cstTime.Format("2006-01-02 15:04:05")
-	return cstString
-}
-
-func FetchWeatherData(state string) store.Weather {
-	if state == "" {
-		fmt.Println("Empty states passed")
+	coords, ok := store.GetCoords(state)
+	if !ok {
+		fmt.Println("Missing coordinates for:", state)
 		return store.Weather{}
 	}
 
-	// var stateCodes store.Coordinates
-	stateCodes := store.StatesData.AllStates[state]
-	fmt.Println(stateCodes)
-	location = fmt.Sprint(stateCodes.Latitude) + "," + fmt.Sprint(stateCodes.Longitude)
-	URL := fmt.Sprintf("%s?location=%s&apikey=%s", apiURL, location, apiKey)
-	fmt.Println(URL)
-	resp, err := http.Get(URL)
+	apiKey := os.Getenv("TOMORROW_API_KEY")
+	if apiKey == "" {
+		fmt.Println("No TOMORROW_API_KEY set")
+		return store.Weather{}
+	}
+
+	location := fmt.Sprintf("%f,%f", coords.Latitude, coords.Longitude)
+	url := fmt.Sprintf("%s?location=%s&apikey=%s", apiURL, location, apiKey)
+
+	resp, err := httpClient.Get(url)
 	if err != nil {
-		fmt.Println("Error while requesting API: ", err)
+		fmt.Println("Request error:", err)
 		return store.Weather{}
 	}
 	defer resp.Body.Close()
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		fmt.Println("Error reading body:", err)
+	if resp.StatusCode != http.StatusOK {
+		fmt.Println("Provider status:", resp.Status)
 		return store.Weather{}
 	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		fmt.Println("Read error:", err)
+		return store.Weather{}
+	}
+
 	var apiResp WeatherResponse
 	if err := json.Unmarshal(body, &apiResp); err != nil {
-		fmt.Println("Failed to parse JSON:", err)
+		fmt.Println("JSON parse error:", err)
+		return store.Weather{}
+	}
+	if len(apiResp.Timelines.Minutely) == 0 {
+		fmt.Println("No minutely data")
 		return store.Weather{}
 	}
 
 	first := apiResp.Timelines.Minutely[0]
 	weatherData := store.Weather{
 		State:    state,
-		Date:     timeToDate(first.Time),
+		Date:     store.TimeToChicago(first.Time),
 		Temp:     first.Values.Temperature,
 		Humidity: first.Values.Humidity,
 		Source:   "tomorrow.io",
 	}
-	store.MU.Lock()
-	// store.UpdatedStates = append(store.UpdatedStates, weatherData)
-	store.UpdatedStates[state] = weatherData
-	store.MU.Unlock()
+
+	store.UpsertWeather(weatherData)
 	return weatherData
 }

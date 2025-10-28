@@ -1,12 +1,12 @@
 package apis
 
-import (
-	"net/http"
-)
+import "net/http"
 
-func FakeWaterRouter() {
+func RegisterRoutes() {
 	http.HandleFunc("/", homeHandler)
 	http.HandleFunc("/health", appHealthHandler)
-	http.HandleFunc("/getWeather", weatherHadhler)
-	http.HandleFunc("/getWeather/", postWeather)
+
+	// Weather
+	http.HandleFunc("/weather", weatherCollectionHandler) // GET list, POST batch
+	http.HandleFunc("/weather/", weatherItemHandler)      // GET one: /weather/{state}
 }
