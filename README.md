@@ -1,6 +1,28 @@
 <h1 align= 'center'>Fake Weather App</h1>
-<<<<<<< HEAD
-=======
 
-<img width="393" height="657" alt="image" src="https://github.com/user-attachments/assets/6b333993-2364-4a6b-b7bd-0a7999d3d0a3" />
->>>>>>> 21e443f8a29c10aa437abff8e97981679b98a62c
+<p align='center'>
+    <img src='https://img.shields.io/badge/License-MIT-green.svg' alt='License: MIT' />
+    <img src='https://img.shields.io/badge/Version-1.0.0-blue.svg' alt='Version: 1.0.0' />
+    <img src='https://img.shields.io/badge/Go-1.16+-00ADD8.svg' alt='Go Version' />
+</p>
+
+## 🌤️ Overview
+A simple weather application simulator built with Go. This app generates random weather data for demonstration purposes.
+
+### ✨ Features
+- Random temperature generation
+- Simulated weather conditions
+- Real-time updates
+- Multiple city support
+
+### 🚀 Quick Start
+```bash
+go run main.go
+```
+
+### 🛠️ Technologies
+- Go
+- HTTP Server
+- JSON API
+
+![alt text](image-1.png)
